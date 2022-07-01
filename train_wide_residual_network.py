@@ -11,6 +11,7 @@ from torchinfo import summary
 from tqdm import tqdm
 
 from models.wide_residual_network import WideResNet
+from watermark.watermark_regularizers import CNNWatermarkRegularizer
 
 
 def train(model, device, train_loader, optimizer, criterion, epoch):
@@ -90,19 +91,21 @@ def main():
     test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False, **device_kwargs)
 
     # network settings
-    model = WideResNet().to(device)
-    summary(model)
+    model = WideResNet(n=args.N, widen_factor=args.k).to(device)
+    # summary(model)
+    embed_weight = model.block1.layer[0].conv2.weight  # (N,C,H,W)
+    wmark_regularizer = CNNWatermarkRegularizer(args.scale, args.embed_dim, args.wmark_wtype, embed_weight)
     optimizer = optim.SGD(model.parameters(), lr=0.1, momentum=0.9, nesterov=True)
     scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[60, 120, 160], gamma=0.2)
     train_criterion = nn.CrossEntropyLoss()
     test_criterion = nn.CrossEntropyLoss(reduction='sum')
 
     # train
-    start_time = time.time()
-    for epoch in range(1, args.epochs + 1):
-        train(model, device, train_loader, optimizer, train_criterion, epoch)
-        test(model, device, test_loader, test_criterion, start_time)
-        scheduler.step()
+    # start_time = time.time()
+    # for epoch in range(1, args.epochs + 1):
+    #     train(model, device, train_loader, optimizer, train_criterion, epoch)
+    #     test(model, device, test_loader, test_criterion, start_time)
+    #     scheduler.step()
 
 
 if __name__ == '__main__':
