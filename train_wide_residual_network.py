@@ -14,19 +14,22 @@ from models.wide_residual_network import WideResNet
 from watermark.watermark_regularizers import CNNWatermarkRegularizer
 
 
-def train(model, device, train_loader, optimizer, criterion, epoch):
+def train(model, device, train_loader, optimizer, criterion, regularizer, epoch):
+    global train_loss, regularizer_loss
     model.train()
-    global loss
     progress_bar = tqdm(train_loader, leave=False)
     for batch_idx, (data, target) in enumerate(progress_bar):
         progress_bar.set_description(f"Epoch: {epoch}")
         data, target = data.to(device, non_blocking=True), target.to(device, non_blocking=True)
         optimizer.zero_grad()
         output = model(data)
-        loss = criterion(output, target)
+        train_loss = criterion(output, target)
+        regularizer_loss = regularizer()
+        loss = train_loss + regularizer_loss
         loss.backward()
         optimizer.step()
-    tqdm.write(f"Epoch: {epoch}, Train Loss: {loss.item():.4f}", end=", ")
+    tqdm.write(f"Epoch: {epoch}, Train loss: {train_loss.item():.4f}, "
+               f"Watermark regularizer loss: {regularizer_loss.item():.4f}", end=", ")
 
 
 def test(model, device, test_loader, criterion, start_time):
@@ -43,9 +46,9 @@ def test(model, device, test_loader, criterion, start_time):
 
     test_loss /= len(test_loader.dataset)
     tqdm.write(
-        f"Test Loss: {test_loss:.4f}, "
-        f"Test Accuracy: {correct}/{len(test_loader.dataset)} ({(100. * correct / len(test_loader.dataset)):.0f}%), "
-        f"Elapsed Time: {int(time.time() - start_time)} sec")
+        f"Test loss: {test_loss:.4f}, "
+        f"Test accuracy: {correct}/{len(test_loader.dataset)} ({(100. * correct / len(test_loader.dataset)):.0f}%), "
+        f"Elapsed time: {int(time.time() - start_time)} sec")
 
 
 def main():
@@ -59,7 +62,7 @@ def main():
     parser.add_argument("--embed_dim", default=256, type=int, help="電子透かしの強度")
     parser.add_argument("--N", default=1, type=int, help="wide residual networkの深さ")
     parser.add_argument("--k", default=4, type=int, help="wide residual networkの幅")
-    parser.add_argument("--target_blk_id", default=1, type=int, choices=[1, 2, 3], help="電子透かしを埋め込むブロックのID")
+    parser.add_argument("--target_blk_id", default=1, type=int, choices=[0, 1, 2, 3], help="電子透かしを埋め込むブロックのID")
     parser.add_argument("--wmark_wtype", default="random", type=str, choices=["direct", "diff", "random"],
                         help="電子透かしの種類")
     parser.add_argument("--base_modelw_fname", default="", type=str, help="事前学習重みのファイルパス")
@@ -92,20 +95,31 @@ def main():
 
     # network settings
     model = WideResNet(n=args.N, widen_factor=args.k).to(device)
-    # summary(model)
-    embed_weight = model.block1.layer[0].conv2.weight  # (N,C,H,W)
-    wmark_regularizer = CNNWatermarkRegularizer(args.scale, args.embed_dim, args.wmark_wtype, embed_weight)
+    summary(model)
     optimizer = optim.SGD(model.parameters(), lr=0.1, momentum=0.9, nesterov=True)
     scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[60, 120, 160], gamma=0.2)
-    train_criterion = nn.CrossEntropyLoss()
+    train_criterion = nn.CrossEntropyLoss(reduction='mean')
     test_criterion = nn.CrossEntropyLoss(reduction='sum')
 
+    # watermark settings
+    if args.target_blk_id == 0:
+        embed_weight = None
+    elif args.target_blk_id == 1:
+        embed_weight = model.block1.layer[0].conv2.weight  # (N,C,H,W)
+    elif args.target_blk_id == 2:
+        embed_weight = model.block2.layer[0].conv2.weight  # (N,C,H,W)
+    elif args.target_blk_id == 3:
+        embed_weight = model.block3.layer[0].conv2.weight  # (N,C,H,W)
+    else:
+        raise ValueError(f"Unsupported target block id: {args.target_blk_id}")
+    wmark_regularizer = CNNWatermarkRegularizer(device, args.scale, args.embed_dim, args.wmark_wtype, embed_weight)
+
     # train
-    # start_time = time.time()
-    # for epoch in range(1, args.epochs + 1):
-    #     train(model, device, train_loader, optimizer, train_criterion, epoch)
-    #     test(model, device, test_loader, test_criterion, start_time)
-    #     scheduler.step()
+    start_time = time.time()
+    for epoch in range(1, args.epochs + 1):
+        train(model, device, train_loader, optimizer, train_criterion, wmark_regularizer, epoch)
+        test(model, device, test_loader, test_criterion, start_time)
+        scheduler.step()
 
 
 if __name__ == '__main__':
