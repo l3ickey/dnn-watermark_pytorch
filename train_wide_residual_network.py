@@ -49,23 +49,40 @@ def test(model, device, test_loader, criterion, start_time):
         f"Test loss: {test_loss:.4f}, "
         f"Test accuracy: {correct}/{len(test_loader.dataset)} ({(100. * correct / len(test_loader.dataset)):.0f}%), "
         f"Elapsed time: {int(time.time() - start_time)} sec")
+    return test_loss
+
+
+class SaveBestModel:
+    def __init__(self):
+        self.best_loss = float('inf')
+
+    def __call__(self, epoch, model, optimizer, criterion, current_loss):
+        if current_loss < self.best_loss:
+            self.best_loss = current_loss
+            torch.save({'epoch': epoch,
+                        'model_state_dict': model.state_dict(),
+                        'optimizer_state_dict': optimizer.state_dict(),
+                        'loss': criterion},
+                       'outputs/wide_residual_network/best_model.pth')
 
 
 def main():
     # argument parser
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset", default="cifar10", type=str, help="学習データセット")
-    parser.add_argument("--history", default="result/train_history.h5", type=str, help="loss, accの保存ファイルパス")
-    parser.add_argument("--batch_size", default=64, type=int, help="学習バッチサイズ")
-    parser.add_argument("--epochs", default=200, type=int, help="学習エポック数")
-    parser.add_argument("--scale", default=0.01, type=float, help="電子透かしの正則化重み")
-    parser.add_argument("--embed_dim", default=256, type=int, help="電子透かしの強度")
-    parser.add_argument("--N", default=1, type=int, help="wide residual networkの深さ")
-    parser.add_argument("--k", default=4, type=int, help="wide residual networkの幅")
-    parser.add_argument("--target_blk_id", default=1, type=int, choices=[0, 1, 2, 3], help="電子透かしを埋め込むブロックのID")
+    parser.add_argument("--dataset", default="cifar10", type=str, help="dataset")
+    parser.add_argument("--history", default="outputs/wide_residual_network/train_history.h5", type=str,
+                        help="history file path")
+    parser.add_argument("--batch_size", default=64, type=int, help="batch size")
+    parser.add_argument("--epochs", default=200, type=int, help="learning epochs")
+    parser.add_argument("--scale", default=0.01, type=float, help="lambda of regulaiization loss")
+    parser.add_argument("--embed_dim", default=256, type=int, help="number of dimensions of the embedding vector")
+    parser.add_argument("--N", default=1, type=int, help="depth of wide residual network")
+    parser.add_argument("--k", default=4, type=int, help="width of wide residual network")
+    parser.add_argument("--target_blk_id", default=1, type=int, choices=[0, 1, 2, 3],
+                        help="If 0, without embedding a watermark")
     parser.add_argument("--wmark_wtype", default="random", type=str, choices=["direct", "diff", "random"],
-                        help="電子透かしの種類")
-    parser.add_argument("--base_modelw_fname", default="", type=str, help="事前学習重みのファイルパス")
+                        help="watarmark type")
+    parser.add_argument("--base_modelw_fname", default="", type=str, help="pre-trained model file path (.pth)")
     args = parser.parse_args()
 
     # device setting
@@ -95,11 +112,14 @@ def main():
 
     # network settings
     model = WideResNet(n=args.N, widen_factor=args.k).to(device)
+    if args.base_modelw_fname:  # load pre-trained model
+        model.load_state_dict(torch.load(args.base_modelw_fname)['model_state_dict'])
     summary(model)
     optimizer = optim.SGD(model.parameters(), lr=0.1, momentum=0.9, nesterov=True)
     scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[60, 120, 160], gamma=0.2)
     train_criterion = nn.CrossEntropyLoss(reduction='mean')
     test_criterion = nn.CrossEntropyLoss(reduction='sum')
+    saver = SaveBestModel()
 
     # watermark settings
     if args.target_blk_id == 0:
@@ -113,12 +133,14 @@ def main():
     else:
         raise ValueError(f"Unsupported target block id: {args.target_blk_id}")
     wmark_regularizer = CNNWatermarkRegularizer(device, args.scale, args.embed_dim, args.wmark_wtype, embed_weight)
+    print(f"Watermark matrix:\n{wmark_regularizer.get_matrix()}")
 
     # train
     start_time = time.time()
     for epoch in range(1, args.epochs + 1):
         train(model, device, train_loader, optimizer, train_criterion, wmark_regularizer, epoch)
-        test(model, device, test_loader, test_criterion, start_time)
+        test_loss = test(model, device, test_loader, test_criterion, start_time)
+        saver(epoch, model, optimizer, train_criterion, test_loss)
         scheduler.step()
 
 
