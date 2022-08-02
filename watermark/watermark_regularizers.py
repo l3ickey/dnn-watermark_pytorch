@@ -10,7 +10,7 @@ def random_index_generator(row, col):
         yield idx
 
 
-class CNNWatermarkRegularizer():
+class CNNWatermarkRegularizer:
     def __init__(self, device, wmark_lambda, embed_dim, wmark_type, embed_weigth):
         self.device = device
         self.wmark_lambda = wmark_lambda
@@ -38,6 +38,9 @@ class CNNWatermarkRegularizer():
                 self.X = torch.randn(X_rows, X_cols).to(self.device)
             else:
                 raise ValueError(f"Unsupported watermark type: {wmark_type}")
+
+    def get_matrix(self):
+        return self.X
 
     def __call__(self):
         if self.embed_weight is not None:
