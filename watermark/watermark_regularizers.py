@@ -40,7 +40,10 @@ class CNNWatermarkRegularizer:
                 raise ValueError(f"Unsupported watermark type: {wmark_type}")
 
     def get_matrix(self):
-        return self.X
+        if self.embed_weight is not None:
+            return self.X
+        else:
+            return None
 
     def __call__(self):
         if self.embed_weight is not None:

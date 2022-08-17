@@ -2,6 +2,7 @@ import argparse
 import os
 import time
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -53,8 +54,9 @@ def test(model, device, test_loader, criterion, start_time):
 
 
 class SaveBestModel:
-    def __init__(self):
+    def __init__(self, output_dir):
         self.best_loss = float('inf')
+        self.output_dir = output_dir
 
     def __call__(self, epoch, model, optimizer, criterion, current_loss):
         if current_loss < self.best_loss:
@@ -63,15 +65,15 @@ class SaveBestModel:
                         'model_state_dict': model.state_dict(),
                         'optimizer_state_dict': optimizer.state_dict(),
                         'loss': criterion},
-                       'outputs/wide_residual_network/best_model.pth')
+                       f'{self.output_dir}/best_model.pth')
 
 
 def main():
     # argument parser
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", default="cifar10", type=str, help="dataset")
-    parser.add_argument("--history", default="outputs/wide_residual_network/train_history.h5", type=str,
-                        help="history file path")
+    parser.add_argument("--history", default="outputs/wide_residual_network/train_history.h5",
+                        type=str, help="history file path")
     parser.add_argument("--batch_size", default=64, type=int, help="batch size")
     parser.add_argument("--epochs", default=200, type=int, help="learning epochs")
     parser.add_argument("--scale", default=0.01, type=float, help="lambda of regulaiization loss")
@@ -85,6 +87,11 @@ def main():
     parser.add_argument("--base_modelw_fname", default="", type=str, help="pre-trained model file path (.pth)")
     args = parser.parse_args()
 
+    # output directory path
+    output_dir = f"outputs/wide_residual_network/epoch{args.epochs}_scale{args.scale}_dim{args.embed_dim}_N{args.N}" \
+                 f"_k{args.k}_blk{args.target_blk_id}_{args.wmark_wtype}"
+    os.makedirs(output_dir, exist_ok=True)
+
     # device setting
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     device_kwargs = {}
@@ -92,7 +99,7 @@ def main():
         device_kwargs.update({'num_workers': os.cpu_count(), 'pin_memory': True})
 
     # data augment
-    torch.manual_seed(0)
+    torch.manual_seed(1)
     mean, std = [0.5, 0.5, 0.5], [0.5, 0.5, 0.5]
     transform = transforms.Compose([
         transforms.RandomAffine(degrees=10, translate=(5 / 32, 5 / 32)),
@@ -119,7 +126,7 @@ def main():
     scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[60, 120, 160], gamma=0.2)
     train_criterion = nn.CrossEntropyLoss(reduction='mean')
     test_criterion = nn.CrossEntropyLoss(reduction='sum')
-    saver = SaveBestModel()
+    saver = SaveBestModel(output_dir)
 
     # watermark settings
     if args.target_blk_id == 0:
@@ -132,8 +139,11 @@ def main():
         embed_weight = model.block3.layer[0].conv2.weight  # (N,C,H,W)
     else:
         raise ValueError(f"Unsupported target block id: {args.target_blk_id}")
+
     wmark_regularizer = CNNWatermarkRegularizer(device, args.scale, args.embed_dim, args.wmark_wtype, embed_weight)
-    print(f"Watermark matrix:\n{wmark_regularizer.get_matrix()}")
+    if embed_weight is not None:
+        print(f"Watermark matrix:\n{wmark_regularizer.get_matrix()}")
+        np.save(f"{output_dir}/watermark_matrix.npy", wmark_regularizer.get_matrix().cpu().numpy())
 
     # train
     start_time = time.time()
