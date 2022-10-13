@@ -1,8 +1,10 @@
 # environment setting files
 .idea/
 
-# outputs
+# outputs, checkpoint
 outputs/
+checkpoint/
+logs/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
