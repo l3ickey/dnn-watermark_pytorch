@@ -22,6 +22,7 @@ def main():
                         help="If 0, without embedding a watermark")
     parser.add_argument("--wmark_wtype", default="random", type=str, choices=["direct", "diff", "random"],
                         help="watarmark type")
+    parser.add_argument("--label", default="Embedded (random)", type=str, help="histogram label")
     args = parser.parse_args()
 
     # load model
@@ -49,8 +50,9 @@ def main():
     # draw histogram
     fig = plt.figure()
     ax = fig.add_subplot(1, 1, 1)
-    ax.hist(embedded_watermark.detach().numpy(), bins=40, alpha=0.5, range=(0, 1), label="Embedded (random)")
+    ax.hist(embedded_watermark.detach().numpy(), bins=40, alpha=0.5, range=(0, 1), label=args.label)
     ax.set_xlim(0, 1)
+    ax.set_ylim(0, args.embed_dim + 10)
     ax.set_ylabel('Frequency')
     ax.legend(loc='upper left')
     plt.savefig(f"{args.output_dirname}embedded_watermark.png")
